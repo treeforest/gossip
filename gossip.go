@@ -35,8 +35,8 @@ type nodeState struct {
 type gossipImpl struct {
 	pb.UnimplementedGossipServer
 	config            *Config
-	nodeMap           *sync.Map                 // 节点管理 id -> *nodeState
-	connMap           *sync.Map                 // 连接管理 id -> *grpc.ClientConn
+	nodeStore         *sync.Map                 // 节点管理 id -> *nodeState
+	connStore         *sync.Map                 // 连接管理 id -> *grpc.ClientConn
 	userMsgChan       chan *pb.Envelope         // 用户消息通道
 	meta              []byte                    // 元数据
 	broadcastMsgChan  chan *pb.BroadcastMessage // 广播消息通道
@@ -47,8 +47,8 @@ type gossipImpl struct {
 func New(config *Config) Gossip {
 	m := &gossipImpl{
 		config:            config,
-		nodeMap:           &sync.Map{},
-		connMap:           &sync.Map{},
+		nodeStore:         &sync.Map{},
+		connStore:         &sync.Map{},
 		userMsgChan:       make(chan *pb.Envelope, 128),
 		broadcastMsgChan:  make(chan *pb.BroadcastMessage, 128),
 		broadcastMidCache: NewCache(config.GossipMidCacheCap, config.GossipMidCacheTimeout),
@@ -61,7 +61,7 @@ func New(config *Config) Gossip {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 
-	go m.handleUserMsg(ctx)
+	go m.dispatch(ctx)
 	go m.schedule(ctx)
 
 	return m
@@ -95,7 +95,7 @@ func (g *gossipImpl) GetMeta() []byte {
 }
 
 func (g *gossipImpl) SendTo(nodeId string, data []byte) error {
-	val, ok := g.connMap.Load(nodeId)
+	val, ok := g.connStore.Load(nodeId)
 	if !ok {
 		return errors.New("not found")
 	}
@@ -106,7 +106,7 @@ func (g *gossipImpl) SendTo(nodeId string, data []byte) error {
 
 func (g *gossipImpl) Close() {
 	g.cancel()
-	g.connMap.Range(func(key, value interface{}) bool {
+	g.connStore.Range(func(key, value interface{}) bool {
 		cc := value.(*grpc.ClientConn)
 		_, _ = pb.NewGossipClient(cc).Leave(context.Background(), &pb.LeaveReq{Id: g.config.Id})
 		_ = cc.Close()
@@ -149,7 +149,7 @@ func (g *gossipImpl) Join(existing []string) {
 			continue
 		}
 
-		g.connMap.Store(id, cc)
+		g.connStore.Store(id, cc)
 	}
 }
 
@@ -188,10 +188,10 @@ func (g *gossipImpl) Broadcast(ctx context.Context, msg *pb.BroadcastMessage) (*
 }
 
 func (g *gossipImpl) Leave(ctx context.Context, req *pb.LeaveReq) (*pb.Empty, error) {
-	val, ok := g.nodeMap.Load(req.GetId())
+	val, ok := g.nodeStore.Load(req.GetId())
 	if ok {
-		g.connMap.Delete(req.GetId())
-		g.nodeMap.Delete(req.GetId())
+		g.connStore.Delete(req.GetId())
+		g.nodeStore.Delete(req.GetId())
 		if g.config.EventDelegate != nil {
 			state := val.(*nodeState)
 			state.Node.State = pb.NodeStateType_Left
@@ -202,7 +202,7 @@ func (g *gossipImpl) Leave(ctx context.Context, req *pb.LeaveReq) (*pb.Empty, er
 }
 
 func (g *gossipImpl) MemberShip(req *pb.Empty, srv pb.Gossip_MemberShipServer) error {
-	g.nodeMap.Range(func(key, value interface{}) bool {
+	g.nodeStore.Range(func(key, value interface{}) bool {
 		state := value.(*nodeState)
 		err := srv.Send(&pb.State{Node: &state.Node, Join: false})
 		if err != nil {
@@ -214,8 +214,8 @@ func (g *gossipImpl) MemberShip(req *pb.Empty, srv pb.Gossip_MemberShipServer) e
 	return nil
 }
 
-// handleUserMsg 处理用户数据
-func (g *gossipImpl) handleUserMsg(ctx context.Context) {
+// dispatch 分发用户数据
+func (g *gossipImpl) dispatch(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -290,7 +290,7 @@ func (g *gossipImpl) schedule(ctx context.Context) {
 // probe 检测节点状态
 func (g *gossipImpl) probe() {
 	ping := func(id string, state *nodeState) {
-		val, ok := g.connMap.Load(id)
+		val, ok := g.connStore.Load(id)
 		if !ok {
 			state.State = pb.NodeStateType_Suspect
 			return
@@ -302,13 +302,13 @@ func (g *gossipImpl) probe() {
 		})
 		if err != nil {
 			state.State = pb.NodeStateType_Dead
-			g.connMap.Delete(state.GetId())
+			g.connStore.Delete(state.GetId())
 			return
 		}
 		state.State = pb.NodeStateType_Alive
 	}
 
-	g.nodeMap.Range(func(key, value interface{}) bool {
+	g.nodeStore.Range(func(key, value interface{}) bool {
 		state := value.(*nodeState)
 		switch state.State {
 		case pb.NodeStateType_Alive:
@@ -318,26 +318,26 @@ func (g *gossipImpl) probe() {
 			if err != nil {
 				// 连接失败
 				if time.Now().Sub(state.StateChange) < time.Second*30 {
-					// 状态改变时间是30s内，可能我是公网未能连接到局域网
-					// 当超时30s状态未更新再改变状态
+					// 状态改变时间是30s内，可能是不同分区的节点，无法连接。
+					// 当超时30s状态未更新再改变状态为Dead
 					break
 				}
 				state.State = pb.NodeStateType_Dead
 			} else {
 				state.State = pb.NodeStateType_Alive
-				g.connMap.Store(key, cc)
+				g.connStore.Store(key, cc)
 			}
 		case pb.NodeStateType_Dead:
 			if time.Now().Sub(state.StateChange) < time.Second*30 {
 				state.State = pb.NodeStateType_Suspect
 			}
 		case pb.NodeStateType_Left:
-			g.nodeMap.Delete(key)
-			g.connMap.Delete(key)
+			g.nodeStore.Delete(key)
+			g.connStore.Delete(key)
 			return true
 		}
 
-		g.nodeMap.Store(key, state)
+		g.nodeStore.Store(key, state)
 		return true
 	})
 }
@@ -347,7 +347,7 @@ func (g *gossipImpl) gossip() {
 	num := g.config.GossipNodes
 	nodes := make([]pb.Node, 0)
 
-	g.nodeMap.Range(func(key, value interface{}) bool {
+	g.nodeStore.Range(func(key, value interface{}) bool {
 		state := value.(*nodeState)
 		if state.State == pb.NodeStateType_Alive {
 			nodes = append(nodes, state.Node)
@@ -397,7 +397,7 @@ func (g *gossipImpl) gossip() {
 	}
 
 	for _, node := range nodes {
-		val, ok := g.connMap.Load(node.GetId())
+		val, ok := g.connStore.Load(node.GetId())
 		if !ok {
 			continue
 		}
@@ -488,7 +488,7 @@ func (g *gossipImpl) pullMembership() {
 		if state.GetNode().GetId() == g.config.Id {
 			continue
 		}
-		_, ok := g.nodeMap.Load(state.GetNode().GetId())
+		_, ok := g.nodeStore.Load(state.GetNode().GetId())
 		if ok {
 			continue
 		}
@@ -502,10 +502,10 @@ func (g *gossipImpl) getRandConnectedNode() (*nodeState, *grpc.ClientConn) {
 		node *nodeState       = nil
 		cc   *grpc.ClientConn = nil
 	)
-	g.nodeMap.Range(func(key, value interface{}) bool {
+	g.nodeStore.Range(func(key, value interface{}) bool {
 		node = value.(*nodeState)
 		if node.State == pb.NodeStateType_Alive {
-			val, ok := g.connMap.Load(node.GetId())
+			val, ok := g.connStore.Load(node.GetId())
 			if !ok {
 				return true
 			}
@@ -589,9 +589,9 @@ func (g *gossipImpl) mergeRemoteState(stream Stream) (id string, join bool, err 
 
 	// 更新远端状态
 	id = remoteState.GetNode().GetId()
-	val, ok := g.nodeMap.Load(id)
+	val, ok := g.nodeStore.Load(id)
 	if !ok {
-		g.nodeMap.Store(id, &nodeState{
+		g.nodeStore.Store(id, &nodeState{
 			Node:        *remoteState.GetNode(),
 			State:       pb.NodeStateType_Suspect, // 刚加入，还没进行连接，状态为suspect
 			StateChange: time.Now(),
@@ -610,7 +610,7 @@ func (g *gossipImpl) mergeRemoteState(stream Stream) (id string, join bool, err 
 				g.config.EventDelegate.NotifyUpdate(&state.Node)
 			}
 		}
-		g.nodeMap.Store(id, state)
+		g.nodeStore.Store(id, state)
 	}
 
 	if g.config.EventDelegate != nil {
