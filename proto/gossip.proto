@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+option go_package = ".;pb";
+
+service Gossip {
+  // 状态同步,同步节点信息+状态信息
+  rpc PushPull(stream Envelope) returns(stream Envelope){}
+
+  // ping
+  rpc Ping(Empty) returns (Empty) {}
+
+  // 用户发起的点对点通信
+  rpc Send(Envelope) returns (Empty) {}
+
+  // 广播数据 gossip
+  rpc Broadcast(BroadcastMessage) returns (Empty) {}
+
+  // Leave 离开网络
+  rpc Leave(LeaveReq) returns (Empty) {}
+
+  // MemberShip 成员信息
+  rpc MemberShip(Empty) returns (stream State) {}
+}
+
+enum NodeStateType{
+  // Alice 能够正常和对方通信
+  Alive = 0;
+  // Suspect 远端节点在局域网，它能连接我，我不能连接它时
+  Suspect = 1;
+  // Dead 远端地址不能访问
+  Dead = 2;
+  // Left 节点主动离开网络
+  Left = 3;
+}
+
+message Node {
+  string id = 1;
+  string name = 2;
+  string ip = 3;
+  int32 port = 4;
+  bytes meta = 5;
+  NodeStateType state = 6;
+}
+
+message State {
+  Node node = 1;
+  bool join = 2;
+}
+
+message Empty {}
+
+// Envelope 消息负载
+message Envelope {
+  bytes payload = 1;
+}
+
+// Payload 分片数据
+message Payload {
+  uint64 seq_num = 1;
+  bytes data = 2;
+}
+
+// BroadcastMessage 广播消息
+message BroadcastMessage {
+  string src_id = 1; // 忽略的来源id
+  string mid = 2; // 传播使用的唯一id
+  Envelope env = 3;
+}
+
+// LeaveReq 离开网络请求
+message LeaveReq {
+  string id = 1;
+}
