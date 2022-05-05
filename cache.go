@@ -76,7 +76,7 @@ func (c *Cache) trigger() {
 	for {
 		select {
 		case <-t.C:
-			c.cache.Range(func(key, value interface{}) bool {
+			c.cache.Range(func(key, value any) bool {
 				el := value.(*list.Element)
 				e := el.Value.(*entry)
 				if time.Now().Sub(e.expire) > 0 {

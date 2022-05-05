@@ -106,7 +106,7 @@ func (g *gossipImpl) SendTo(nodeId string, data []byte) error {
 
 func (g *gossipImpl) Close() {
 	g.cancel()
-	g.connStore.Range(func(key, value interface{}) bool {
+	g.connStore.Range(func(key, value any) bool {
 		cc := value.(*grpc.ClientConn)
 		_, _ = pb.NewGossipClient(cc).Leave(context.Background(), &pb.LeaveReq{Id: g.config.Id})
 		_ = cc.Close()
@@ -202,7 +202,7 @@ func (g *gossipImpl) Leave(ctx context.Context, req *pb.LeaveReq) (*pb.Empty, er
 }
 
 func (g *gossipImpl) MemberShip(req *pb.Empty, srv pb.Gossip_MemberShipServer) error {
-	g.nodeStore.Range(func(key, value interface{}) bool {
+	g.nodeStore.Range(func(key, value any) bool {
 		state := value.(*nodeState)
 		err := srv.Send(&pb.State{Node: &state.Node, Join: false})
 		if err != nil {
@@ -308,7 +308,7 @@ func (g *gossipImpl) probe() {
 		state.State = pb.NodeStateType_Alive
 	}
 
-	g.nodeStore.Range(func(key, value interface{}) bool {
+	g.nodeStore.Range(func(key, value any) bool {
 		state := value.(*nodeState)
 		switch state.State {
 		case pb.NodeStateType_Alive:
@@ -347,7 +347,7 @@ func (g *gossipImpl) gossip() {
 	num := g.config.GossipNodes
 	nodes := make([]pb.Node, 0)
 
-	g.nodeStore.Range(func(key, value interface{}) bool {
+	g.nodeStore.Range(func(key, value any) bool {
 		state := value.(*nodeState)
 		if state.State == pb.NodeStateType_Alive {
 			nodes = append(nodes, state.Node)
@@ -502,7 +502,7 @@ func (g *gossipImpl) getRandConnectedNode() (*nodeState, *grpc.ClientConn) {
 		node *nodeState       = nil
 		cc   *grpc.ClientConn = nil
 	)
-	g.nodeStore.Range(func(key, value interface{}) bool {
+	g.nodeStore.Range(func(key, value any) bool {
 		node = value.(*nodeState)
 		if node.State == pb.NodeStateType_Alive {
 			val, ok := g.connStore.Load(node.GetId())
