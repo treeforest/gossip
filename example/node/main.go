@@ -15,11 +15,11 @@ import (
 type eventDelegate struct{}
 
 func (d *eventDelegate) NotifyJoin(n *pb.Node) {
-	log.Infof("node join, addr[%s] id[%s]", n.FullAddress(), n.GetId())
+	log.Infof("node join, addr[%s] id[%s]", n.FullAddress(), n.Id)
 }
 
 func (d *eventDelegate) NotifyLeave(n *pb.Node) {
-	log.Infof("node leave, addr[%s] id[%s]", n.FullAddress(), n.GetId())
+	log.Infof("node leave, addr[%s] id[%s]", n.FullAddress(), n.Id)
 }
 
 func (d *eventDelegate) NotifyUpdate(n *pb.Node) {

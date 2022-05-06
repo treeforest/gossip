@@ -45,7 +45,7 @@ type Config struct {
 	// GossipInterval 广播消息的间隔时间
 	GossipInterval time.Duration
 
-	// GossipNodes 随机选取多少个节点进行发送
+	// GossipNodes 随机选取多少个节点进行发送,-1则表示发送给所有的邻居节点
 	GossipNodes int
 
 	// GossipToTheDeadTime
@@ -69,7 +69,7 @@ func DefaultConfig() *Config {
 		Name:        hostname,
 		BindAddress: "0.0.0.0",
 		BindPort:    4377, // 小游戏
-		DialTimeout: time.Second * 2,
+		DialTimeout: time.Second,
 		DialOptions: []grpc.DialOption{
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 		},
@@ -78,12 +78,12 @@ func DefaultConfig() *Config {
 		},
 		Delegate:              nil,
 		EventDelegate:         nil,
-		ProbeInterval:         200 * time.Millisecond,
+		ProbeInterval:         150 * time.Millisecond,
 		ProbeTimeout:          2 * time.Second,
-		GossipInterval:        300 * time.Millisecond,
+		GossipInterval:        100 * time.Millisecond,
 		GossipNodes:           3,
 		GossipToTheDeadTime:   1 * time.Second,
-		GossipMidCacheCap:     1024 * 1024,
+		GossipMidCacheCap:     1024 * 1024 * 4,
 		GossipMidCacheTimeout: time.Second * 30,
 		PushPullInterval:      200 * time.Millisecond,
 	}

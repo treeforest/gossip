@@ -40,15 +40,15 @@ func (o *Operate) Unmarshal(data []byte) {
 type eventDelegate struct{}
 
 func (d *eventDelegate) NotifyJoin(n *pb.Node) {
-	log.Infof("node join -> addr[%s] id[%s]", n.FullAddress(), n.GetId())
+	log.Infof("node join -> addr[%s] id[%s]", n.FullAddress(), n.Id)
 }
 
 func (d *eventDelegate) NotifyLeave(n *pb.Node) {
-	log.Infof("node leave -> addr[%s] id[%s]", n.FullAddress(), n.GetId())
+	log.Infof("node leave -> addr[%s] id[%s]", n.FullAddress(), n.Id)
 }
 
 func (d *eventDelegate) NotifyUpdate(n *pb.Node) {
-	log.Infof("node update -> addr[%s] id[%s] Meta[%s]", n.FullAddress(), n.GetId(), n.Meta)
+	log.Infof("node update -> addr[%s] id[%s] Meta[%s]", n.FullAddress(), n.Id, n.Meta)
 }
 
 type Server struct {
@@ -155,6 +155,8 @@ func main() {
 	port := flag.Int("port", 0, "listen port")
 	flag.Parse()
 
+	log.SetLevel(log.INFO)
+
 	cache, _ := bigcache.NewBigCache(bigcache.DefaultConfig(24 * time.Hour))
 
 	s := &Server{
@@ -165,11 +167,11 @@ func main() {
 	time.Sleep(time.Millisecond * 500)
 
 	conf := gossip.DefaultConfig()
-	conf.BindAddress = "0.0.0.0"
+	conf.BindAddress = "localhost"
 	conf.BindPort = int32(*port)
 	conf.Delegate = s
 	conf.EventDelegate = &eventDelegate{}
-	conf.GossipNodes = 2
+	conf.GossipNodes = 3
 
 	g := gossip.New(conf)
 	if len(*member) != 0 {

@@ -2,12 +2,22 @@ syntax = "proto3";
 
 option go_package = ".;pb";
 
+// gogo proto
+import "gogoproto/gogo.proto";
+option (gogoproto.gostring_all) = true;
+option (gogoproto.equal_all) = true;
+option (gogoproto.verbose_equal_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_getters_all) = false;
+
 service Gossip {
   // 状态同步,同步节点信息+状态信息
   rpc PushPull(stream Envelope) returns(stream Envelope){}
 
   // ping
-  rpc Ping(Empty) returns (Empty) {}
+  rpc Ping(PingReq) returns (PingResp) {}
 
   // 用户发起的点对点通信
   rpc Send(Envelope) returns (Empty) {}
@@ -19,7 +29,7 @@ service Gossip {
   rpc Leave(LeaveReq) returns (Empty) {}
 
   // MemberShip 成员信息
-  rpc MemberShip(Empty) returns (stream State) {}
+  rpc MemberShip(MembershipReq) returns (MembershipResp) {}
 }
 
 enum NodeStateType{
@@ -43,9 +53,12 @@ message Node {
 }
 
 message State {
-  Node node = 1;
+  Node node = 1 [(gogoproto.nullable) = false];
   bool join = 2;
 }
+
+message PingReq {}
+message PingResp{}
 
 message Empty {}
 
@@ -64,10 +77,16 @@ message Payload {
 message BroadcastMessage {
   string src_id = 1; // 忽略的来源id
   string mid = 2; // 传播使用的唯一id
-  Envelope env = 3;
+  Envelope env = 3 [(gogoproto.nullable) = false];
 }
 
 // LeaveReq 离开网络请求
 message LeaveReq {
   string id = 1;
+}
+
+message MembershipReq{}
+
+message MembershipResp {
+  repeated Node nodes = 1 [(gogoproto.nullable) = false];
 }

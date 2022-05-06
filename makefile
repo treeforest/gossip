@@ -1,2 +1,2 @@
 gen:
-	protoc --gofast_out=plugins=grpc:pb pb/*.proto
+	protoc --proto_path=pb pb/*.proto --gofast_out=plugins=grpc:pb pb/*.proto
