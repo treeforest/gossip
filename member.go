@@ -12,9 +12,14 @@ import (
 	"time"
 )
 
+type MemberError error
+
 var (
-	StopError   = errors.New("stopped")
-	Unconnected = errors.New("unconnected")
+	StopError   MemberError = errors.New("stopped")
+	Unconnected MemberError = errors.New("unconnected")
+	Suspect     MemberError = errors.New("suspect")
+	Dead        MemberError = errors.New("dead")
+	Left        MemberError = errors.New("leaved")
 )
 
 type member struct {
@@ -98,14 +103,27 @@ func (m *member) Update(node pb.Node) bool {
 	if m.Node.State != node.State {
 		m.Node.State = node.State
 	}
+
 	if m.Node.Name != node.Name {
 		m.Node.Name = node.Name
 	}
-	if !bytes.Equal(m.Node.Meta, node.Meta) {
-		m.Node.Meta = node.Meta
+
+	if m.Node.Ip != node.Ip {
+		m.Node.Ip = node.Ip
 	}
 
-	return true
+	if m.Node.Port != node.Port {
+		m.Node.Port = node.Port
+	}
+
+	m.Node.State = node.State
+
+	if !bytes.Equal(m.Node.Meta, node.Meta) {
+		m.Node.Meta = node.Meta
+		return true
+	}
+
+	return false
 }
 
 func (m *member) State() pb.NodeStateType {
@@ -114,10 +132,14 @@ func (m *member) State() pb.NodeStateType {
 	return m.state
 }
 
-func (m *member) setState(state pb.NodeStateType) {
+func (m *member) setState(state pb.NodeStateType) bool {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
+	if m.state == state {
+		return false
+	}
 	m.state = state
+	return true
 }
 
 func (m *member) close() {
@@ -125,39 +147,44 @@ func (m *member) close() {
 
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	_ = m.cc.Close()
-	m.cc = nil
+	if m.cc != nil {
+		_ = m.cc.Close()
+		m.cc = nil
+	}
 }
 
-func (m *member) broadcast(msg *pb.BroadcastMessage) {
+func (m *member) sendBroadcastMessage(msg *pb.BroadcastMessage) {
 	m.sendAsync(msg)
 }
 
-func (m *member) sendLeaveReq(id string) error {
+func (m *member) sendLeaveRequest(id string) error {
 	_, err := m.send(&pb.LeaveReq{Id: id})
 	return err
 }
 
-func (m *member) sendEnvelope(payload []byte) error {
+func (m *member) sendUserMsg(payload []byte) error {
 	_, err := m.send(&pb.Envelope{Payload: payload})
 	return err
 }
 
-func (m *member) pushPullStream() (pb.Gossip_PushPullClient, error) {
-	cli, err := m.client()
-	if err != nil {
-		return nil, err
+func (m *member) getPushPullStream() (pb.Gossip_PushPullClient, error) {
+	cli := m.client()
+	if cli == nil {
+		return nil, Unconnected
 	}
 	return cli.PushPull(context.Background())
 }
 
-func (m *member) sendMembershipReq() (*pb.MembershipResp, error) {
+func (m *member) sendMembershipRequest() (*pb.MembershipResp, error) {
 	resp, err := m.send(&pb.MembershipReq{})
-	return resp.(*pb.MembershipResp), err
+	if err != nil {
+		return nil, err
+	}
+	return resp.(*pb.MembershipResp), nil
 }
 
 func (m *member) ping() error {
-	_, err := m.send(&pb.Empty{})
+	_, err := m.send(&pb.PingReq{})
 	return err
 }
 
@@ -195,18 +222,32 @@ func (m *member) sendAsync(v any) {
 }
 
 func (m *member) dispatch() {
+LOOP:
 	for {
 		select {
 		case <-m.stopped:
 			return
 		case e := <-m.ch:
-			cli, err := m.client()
-			if err != nil {
-				e.c <- err
+			cli := m.client()
+			if cli == nil {
+				e.c <- Unconnected
 				break
 			}
 
+			switch m.State() {
+			case pb.NodeStateType_Dead:
+				e.c <- Dead
+				goto LOOP
+			case pb.NodeStateType_Left:
+				e.c <- Left
+				goto LOOP
+			case pb.NodeStateType_Suspect:
+				e.c <- Suspect
+				goto LOOP
+			}
+
 			ctx := context.Background()
+			var err error
 
 			switch msg := e.target.(type) {
 			case *pb.BroadcastMessage:
@@ -221,7 +262,7 @@ func (m *member) dispatch() {
 				e.retValue, err = cli.MemberShip(ctx, msg)
 			}
 
-			if err != nil {
+			if err == nil {
 				m.UpdateStateChange()
 			}
 
@@ -230,23 +271,33 @@ func (m *member) dispatch() {
 	}
 }
 
-func (m *member) client() (pb.GossipClient, error) {
+func (m *member) client() pb.GossipClient {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	if m.cc == nil {
+		return nil
+	}
+	return pb.NewGossipClient(m.cc)
+}
+
+func (m *member) connect() error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	if m.cc == nil {
-		// connect
-		cc, err := m.dial()
-		if err != nil {
-			return nil, err
-		}
-		m.cc = cc
+	if m.cc != nil {
+		return nil
 	}
 
-	return pb.NewGossipClient(m.cc), nil
+	var err error
+	m.cc, err = m.dial()
+
+	return err
 }
 
 func (m *member) reconnect() error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
 	var err error
 	for i := 0; i < 3; i++ {
 		m.cc, err = m.dial()

@@ -75,7 +75,7 @@ func (s *membership) Leave(localId string) {
 	s.Lock()
 	defer s.Unlock()
 	for id, m := range s.members {
-		_ = m.sendLeaveReq(localId)
+		_ = m.sendLeaveRequest(localId)
 		m.close()
 		delete(s.members, id)
 	}

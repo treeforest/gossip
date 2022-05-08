@@ -18,7 +18,7 @@ import (
 type Gossip interface {
 	Join(existing []string)
 	Close()
-	SendTo(nodeId string, data []byte) error
+	Go(id string, data []byte) error
 	SetMeta(meta []byte)
 	GetMeta() []byte
 }
@@ -84,13 +84,13 @@ func (g *gossipImpl) GetMeta() []byte {
 	return g.meta
 }
 
-func (g *gossipImpl) SendTo(nodeId string, data []byte) error {
+func (g *gossipImpl) Go(nodeId string, data []byte) error {
 	m, ok := g.ms.Load(nodeId)
 	if !ok {
 		return errors.New("not found")
 	}
 
-	return m.sendEnvelope(data)
+	return m.sendUserMsg(data)
 }
 
 func (g *gossipImpl) Close() {
@@ -111,26 +111,31 @@ func (g *gossipImpl) Join(existing []string) {
 
 		m := newMember(nil, addr, g.config.DialTimeout, g.config.DialOptions)
 
-		stream, err := m.pushPullStream()
+		if err := m.connect(); err != nil {
+			log.Warnf("connect failed: (addr=%s, err=%v)", addr, err)
+			continue
+		}
+
+		stream, err := m.getPushPullStream()
 		if err != nil {
-			log.Errorf("get pushPull stream failed: (addr=%s, err=%v)", addr, err)
+			log.Warnf("get pushPull stream failed: (addr=%s, err=%v)", addr, err)
 			continue
 		}
 
 		err = g.sendLocalState(stream, true)
 		if err != nil {
-			log.Errorf("dispatch local state failed: (addr=%s, err=%v)", addr, err)
+			log.Warnf("dispatch local state failed: (addr=%s, err=%v)", addr, err)
 			continue
 		}
 
 		if err = stream.CloseSend(); err != nil {
-			log.Errorf("close dispatch failed: (addr=%s, err=%v)", addr, err)
+			log.Warnf("close send stream failed: (addr=%s, err=%v)", addr, err)
 			continue
 		}
 
 		state, _, err := g.mergeRemoteState(stream)
 		if err != nil {
-			log.Errorf("merge remote state failed: (addr=%s, err=%v)", addr, err)
+			log.Warnf("merge remote state failed: (addr=%s, err=%v)", addr, err)
 			continue
 		}
 
@@ -224,7 +229,8 @@ func (g *gossipImpl) schedule(ctx context.Context) {
 		go g.triggerFunc(ctx, g.config.PushPullInterval, g.pushPull)
 	}
 
-	go g.triggerFunc(ctx, time.Second, g.pullMembership)
+	g.pullMembership()
+	go g.triggerFunc(ctx, g.config.PullMembershipInterval, g.pullMembership)
 }
 
 // probe 检测节点状态
@@ -232,21 +238,52 @@ func (g *gossipImpl) probe() {
 	g.ms.Range(func(m *member) bool {
 		go func(m *member) {
 			switch m.State() {
-			case pb.NodeStateType_Alive, pb.NodeStateType_Suspect:
-				err := m.ping()
-				if err != nil {
-					err = m.reconnect()
-				}
-				if err != nil {
+			case pb.NodeStateType_Suspect:
+				if err := m.connect(); err != nil {
 					m.setState(pb.NodeStateType_Dead)
-				} else {
-					m.setState(pb.NodeStateType_Alive)
+					break
 				}
+				if m.setState(pb.NodeStateType_Alive) {
+					m.UpdateStateChange()
+					if g.config.EventDelegate != nil {
+						go g.config.EventDelegate.NotifyJoin(m.GetNode())
+					}
+				}
+
+			case pb.NodeStateType_Alive:
+				if time.Now().Sub(m.StateChange()) > g.config.ProbeTimeout {
+					m.setState(pb.NodeStateType_Dead)
+					break
+				}
+				// send ping message
+				if err := m.ping(); err != nil {
+					// 可能网络丢包导致收包失败
+
+					// 尝试重连
+					if err = m.reconnect(); err != nil {
+						break
+					}
+					m.UpdateStateChange()
+				}
+				m.setState(pb.NodeStateType_Alive)
+
 			case pb.NodeStateType_Dead:
-				if time.Now().Sub(m.StateChange()) < time.Second*30 {
-					// 30s 之内均进行尝试重连
-					if err := m.reconnect(); err == nil {
-						m.setState(pb.NodeStateType_Alive)
+				// 尝试重连
+				if err := m.reconnect(); err == nil {
+					if m.setState(pb.NodeStateType_Alive) {
+						m.UpdateStateChange()
+						if g.config.EventDelegate != nil {
+							go g.config.EventDelegate.NotifyJoin(m.GetNode())
+						}
+					}
+					break
+				}
+
+				if time.Now().Sub(m.StateChange()) > g.config.ProbeTimeout*3 {
+					if m.setState(pb.NodeStateType_Left) {
+						if g.config.EventDelegate != nil {
+							go g.config.EventDelegate.NotifyLeave(m.GetNode())
+						}
 					}
 				}
 			}
@@ -304,7 +341,7 @@ func (g *gossipImpl) gossip() {
 			}
 			msg.SrcId = g.config.Id // 设置源节点ID
 
-			m.broadcast(msg)
+			m.sendBroadcastMessage(msg)
 		}
 	}
 }
@@ -318,19 +355,22 @@ func (g *gossipImpl) pushPull() {
 
 	log.Debugf("pushPull from:%s", m.FullAddress())
 
-	stream, err := m.pushPullStream()
+	stream, err := m.getPushPullStream()
 	if err != nil {
-		log.Warnf("get pushPull stream failed: %v", err)
+		log.Debugf("get pushPull stream failed: %v", err)
 		return
 	}
 
 	err = g.sendLocalState(stream, false)
 	if err != nil {
-		log.Errorf("dispatch local state failed: %v", err)
+		log.Errorf("send local state failed: %v", err)
 		return
 	}
 
-	_ = stream.CloseSend()
+	if err = stream.CloseSend(); err != nil {
+		log.Errorf("close send stream failed: %v", err)
+		return
+	}
 
 	_, _, err = g.mergeRemoteState(stream)
 	if err != nil {
@@ -345,28 +385,29 @@ func (g *gossipImpl) pullMembership() {
 		return
 	}
 
-	resp, err := m.sendMembershipReq()
+	resp, err := m.sendMembershipRequest()
 	if err != nil {
-		log.Warnf("send membership request failed:%v", err)
+		log.Debugf("send membership request failed:%v", err)
 		return
 	}
+
+	d := g.config.EventDelegate
 
 	for _, node := range resp.Nodes {
 		if node.Id == g.config.Id {
 			continue
 		}
 
-		if _, ok := g.ms.Load(node.Id); ok {
+		if mm, ok := g.ms.Load(node.Id); ok {
+			if mm.Update(node) {
+				if d != nil {
+					d.NotifyUpdate(&node)
+				}
+			}
 			continue
 		}
 
-		newM := newMember(&node, node.FullAddress(), g.config.DialTimeout, g.config.DialOptions)
-		g.ms.Store(node.Id, newM)
-
-		if g.config.EventDelegate != nil {
-			// 节点加入
-			g.config.EventDelegate.NotifyJoin(newM.GetNode())
-		}
+		g.ms.Store(node.Id, newMember(&node, node.FullAddress(), g.config.DialTimeout, g.config.DialOptions))
 	}
 }
 
@@ -467,11 +508,6 @@ func (g *gossipImpl) mergeRemoteState(stream Stream) (state *pb.State, join bool
 		m = newMember(&remoteState.Node, remoteState.Node.FullAddress(),
 			g.config.DialTimeout, g.config.DialOptions)
 		g.ms.Store(id, m)
-
-		if g.config.EventDelegate != nil {
-			// 节点加入
-			g.config.EventDelegate.NotifyJoin(m.GetNode())
-		}
 
 	} else {
 		if m.Id == g.config.Id {

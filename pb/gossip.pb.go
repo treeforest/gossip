@@ -35,7 +35,7 @@ type NodeStateType int32
 const (
 	// Alice 能够正常和对方通信
 	NodeStateType_Alive NodeStateType = 0
-	// Suspect 远端节点在局域网，它能连接我，我不能连接它时
+	// Suspect 不确定是否能连接（初始状态）
 	NodeStateType_Suspect NodeStateType = 1
 	// Dead 远端地址不能访问
 	NodeStateType_Dead NodeStateType = 2

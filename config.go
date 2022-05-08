@@ -60,6 +60,9 @@ type Config struct {
 
 	// PushPullInterval 状态同步间隔时间
 	PushPullInterval time.Duration
+
+	// PullMembershipInterval 成员同步间隔时间
+	PullMembershipInterval time.Duration
 }
 
 func DefaultConfig() *Config {
@@ -76,16 +79,17 @@ func DefaultConfig() *Config {
 		ServerOptions: []grpc.ServerOption{
 			grpc.Creds(insecure.NewCredentials()),
 		},
-		Delegate:              nil,
-		EventDelegate:         nil,
-		ProbeInterval:         150 * time.Millisecond,
-		ProbeTimeout:          2 * time.Second,
-		GossipInterval:        100 * time.Millisecond,
-		GossipNodes:           3,
-		GossipToTheDeadTime:   1 * time.Second,
-		GossipMidCacheCap:     1024 * 1024 * 4,
-		GossipMidCacheTimeout: time.Second * 30,
-		PushPullInterval:      200 * time.Millisecond,
+		Delegate:               nil,
+		EventDelegate:          nil,
+		ProbeInterval:          time.Millisecond * 150,
+		ProbeTimeout:           time.Millisecond * 1500,
+		GossipInterval:         time.Millisecond * 100,
+		GossipNodes:            3,
+		GossipToTheDeadTime:    time.Second * 1,
+		GossipMidCacheCap:      1024 * 1024 * 4,
+		GossipMidCacheTimeout:  time.Second * 30,
+		PushPullInterval:       time.Second * 20,
+		PullMembershipInterval: time.Second * 5,
 	}
 }
 

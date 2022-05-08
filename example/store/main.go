@@ -82,10 +82,6 @@ func (s *Server) GetBroadcasts() [][]byte {
 }
 
 func (s *Server) LocalState(join bool) []byte {
-	if !join {
-		return []byte{}
-	}
-
 	mp := make(map[string]string)
 	it := s.cache.Iterator()
 	for it.SetNext() {
@@ -101,7 +97,7 @@ func (s *Server) LocalState(join bool) []byte {
 }
 
 func (s *Server) MergeRemoteState(buf []byte, join bool) {
-	if len(buf) == 0 || !join {
+	if len(buf) == 0 {
 		return
 	}
 
