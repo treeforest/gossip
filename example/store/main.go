@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -37,24 +39,22 @@ func (o *Operate) Unmarshal(data []byte) {
 	_ = json.Unmarshal(data, o)
 }
 
-type eventDelegate struct{}
-
-func (d *eventDelegate) NotifyJoin(n *pb.Node) {
-	log.Infof("node join -> addr[%s] id[%s]", n.FullAddress(), n.Id)
-}
-
-func (d *eventDelegate) NotifyLeave(n *pb.Node) {
-	log.Infof("node leave -> addr[%s] id[%s]", n.FullAddress(), n.Id)
-}
-
-func (d *eventDelegate) NotifyUpdate(n *pb.Node) {
-	log.Infof("node update -> addr[%s] id[%s] Meta[%s]", n.FullAddress(), n.Id, n.Meta)
-}
-
 type Server struct {
 	cache *bigcache.BigCache
 	queue [][]byte
 	mu    sync.Mutex
+}
+
+func (s *Server) NotifyJoin(m pb.Membership) {
+	log.Infof("node join -> addr[%s] id[%s]", m.Endpoint, m.Id)
+}
+
+func (s *Server) NotifyLeave(m pb.Membership) {
+	log.Infof("node leave -> addr[%s] id[%s]", m.Endpoint, m.Id)
+}
+
+func (s *Server) NotifyUpdate(m pb.Membership) {
+	log.Infof("node update -> addr[%s] id[%s] Meta[%s]", m.Endpoint, m.Id, m.Metadata)
 }
 
 func (s *Server) NotifyMsg(data []byte) {
@@ -81,30 +81,46 @@ func (s *Server) GetBroadcasts() [][]byte {
 	return msgs
 }
 
-func (s *Server) LocalState(join bool) []byte {
-	mp := make(map[string]string)
+func (s *Server) Summary() []byte {
+	mp := make(map[string]struct{})
 	it := s.cache.Iterator()
 	for it.SetNext() {
 		e, _ := it.Value()
-		mp[e.Key()] = string(e.Value())
+		mp[e.Key()] = struct{}{}
 	}
-
-	if len(mp) == 0 {
-		return []byte{}
-	}
-	data, _ := json.Marshal(mp)
-	return data
+	buf := bytes.NewBuffer(nil)
+	_ = gob.NewEncoder(buf).Encode(mp)
+	return buf.Bytes()
 }
 
-func (s *Server) MergeRemoteState(buf []byte, join bool) {
-	if len(buf) == 0 {
-		return
+func (s *Server) LocalState(summary []byte) []byte {
+	mp := make(map[string]struct{})
+	if summary != nil {
+		_ = gob.NewDecoder(bytes.NewReader(summary)).Decode(&mp)
 	}
 
-	mp := make(map[string]string)
-	_ = json.Unmarshal(buf, &mp)
-	for k, v := range mp {
-		_ = s.cache.Set(k, []byte(v))
+	state := make(map[string][]byte)
+	it := s.cache.Iterator()
+	for it.SetNext() {
+		e, _ := it.Value()
+		if _, ok := mp[e.Key()]; ok {
+			continue
+		}
+		state[e.Key()] = e.Value()
+	}
+
+	buf := bytes.NewBuffer(nil)
+	_ = gob.NewEncoder(buf).Encode(state)
+	return buf.Bytes()
+}
+
+func (s *Server) MergeRemoteState(buf []byte) {
+	state := make(map[string][]byte)
+	_ = gob.NewDecoder(bytes.NewReader(buf)).Decode(&state)
+	for k, v := range state {
+		if _, err := s.cache.Get(k); err == bigcache.ErrEntryNotFound {
+			_ = s.cache.Set(k, v)
+		}
 	}
 }
 
@@ -149,6 +165,7 @@ func (s *Server) Run(addr string) {
 func main() {
 	member := flag.String("member", "", "existing member")
 	port := flag.Int("port", 0, "listen port")
+	endpoint := flag.String("endpoint", "", "exposed endpoint")
 	flag.Parse()
 
 	log.SetLevel(log.INFO)
@@ -163,20 +180,17 @@ func main() {
 	time.Sleep(time.Millisecond * 500)
 
 	conf := gossip.DefaultConfig()
-	conf.BindAddress = "localhost"
-	conf.BindPort = int32(*port)
+	conf.Port = *port
+	conf.Endpoint = *endpoint
 	conf.Delegate = s
-	conf.EventDelegate = &eventDelegate{}
-	conf.GossipNodes = 3
+	conf.EventDelegate = s
+	conf.BootstrapPeers = strings.Split(*member, ",")
 
 	g := gossip.New(conf)
-	if len(*member) != 0 {
-		g.Join(strings.Split(*member, ","))
-	}
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, os.Kill)
 	<-done
-	g.Close()
+	g.Stop()
 	time.Sleep(time.Second)
 }

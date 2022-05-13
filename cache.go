@@ -2,15 +2,16 @@ package gossip
 
 import (
 	"container/list"
+	"github.com/google/uuid"
 	"sync"
 	"time"
 )
 
-// Cache 消息id的过期+lru缓存
-type Cache struct {
+// LRUCache 消息id的过期+lru缓存
+type LRUCache struct {
 	Cap    int
 	TTL    time.Duration
-	cache  sync.Map
+	cache  map[string]*list.Element
 	ll     list.List
 	locker sync.RWMutex
 }
@@ -20,74 +21,107 @@ type entry struct {
 	expire time.Time
 }
 
-func NewCache(cap int, ttl time.Duration) *Cache {
-	c := &Cache{
+func NewCache(cap int, ttl time.Duration) *LRUCache {
+	c := &LRUCache{
 		Cap:    cap,
 		TTL:    ttl,
 		ll:     list.List{},
-		cache:  sync.Map{},
+		cache:  make(map[string]*list.Element),
 		locker: sync.RWMutex{},
 	}
 	go c.trigger()
 	return c
 }
 
-func (c *Cache) Set(key string) {
-	if val, ok := c.cache.Load(key); ok {
-		el := val.(*list.Element)
-		c.locker.Lock()
-		c.ll.Remove(el)
-		c.locker.Unlock()
-		c.cache.Delete(key)
-	}
-
+func (c *LRUCache) Set(key string) {
 	c.locker.Lock()
-	el := c.ll.PushFront(&entry{key: key, expire: time.Now().Add(c.TTL)})
+
+	element, exist := c.cache[key]
+	if !exist {
+		element = c.ll.PushFront(&entry{key: key, expire: time.Now().Add(c.TTL)})
+		c.cache[key] = element
+	} else {
+		// 更新过期时间
+		element.Value.(*entry).expire = time.Now().Add(c.TTL)
+		// 移到队首
+		c.ll.MoveToFront(element)
+	}
+
 	c.locker.Unlock()
-	c.cache.Store(key, el)
 
-	if c.Cap > 0 && c.ll.Len() > c.Cap {
+	c.locker.RLock()
+	length := c.ll.Len()
+	c.locker.RUnlock()
+
+	if c.Cap > 0 && length > c.Cap {
 		c.removeOldest()
+		return
 	}
 }
 
-func (c *Cache) Has(key string) bool {
-	c.locker.RLock()
-	_, ok := c.cache.Load(key)
-	c.locker.RUnlock()
-	return ok
+func (c *LRUCache) NewID() string {
+	id := uuid.NewString()
+	c.Set(id)
+	return id
 }
 
-func (c *Cache) removeOldest() {
+func (c *LRUCache) Has(key string) bool {
 	c.locker.RLock()
+	_, exist := c.cache[key]
+	c.locker.RUnlock()
+	return exist
+}
+
+func (c *LRUCache) removeOldest() {
+	c.locker.Lock()
 	el := c.ll.Back()
-	c.locker.RUnlock()
-	if el != nil {
-		c.locker.Lock()
-		c.ll.Remove(el)
+	if el == nil {
 		c.locker.Unlock()
-		e := el.Value.(*entry)
-		c.cache.Delete(e.key)
+		return
 	}
+	c.ll.Remove(el)
+	e := el.Value.(*entry)
+	delete(c.cache, e.key)
+	c.locker.Unlock()
 }
 
-func (c *Cache) trigger() {
+func (c *LRUCache) trigger() {
 	t := time.NewTicker(time.Second * 5)
 	for {
 		select {
 		case <-t.C:
-			c.cache.Range(func(key, value any) bool {
-				el := value.(*list.Element)
-				e := el.Value.(*entry)
-				if time.Now().Sub(e.expire) > 0 {
-					// 过期
-					c.locker.Lock()
-					c.ll.Remove(el)
-					c.locker.Unlock()
-					c.cache.Delete(key)
+			expired := map[string]*list.Element{}
+
+			// 从后往前检查：越接近过期时间的越靠后
+			for {
+				c.locker.RLock()
+				element := c.ll.Back()
+				c.locker.RUnlock()
+
+				if element == nil {
+					break
 				}
-				return true
-			})
+
+				e := element.Value.(*entry)
+				if time.Now().Sub(e.expire) >= 0 {
+					// 过期了
+					expired[e.key] = element
+					continue
+				}
+
+				break
+			}
+
+			if len(expired) == 0 {
+				break
+			}
+
+			c.locker.Lock()
+			for key, element := range expired {
+				c.ll.Remove(element)
+				delete(c.cache, key)
+			}
+			c.locker.Unlock()
 		}
 	}
 }

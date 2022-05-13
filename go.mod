@@ -8,6 +8,7 @@ require (
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.2
 	github.com/google/uuid v1.3.0
+	github.com/pkg/errors v0.9.1
 	github.com/treeforest/logger v0.1.0
 	google.golang.org/grpc v1.45.0
 )

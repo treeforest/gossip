@@ -2,10 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/treeforest/gossip"
+	"github.com/treeforest/gossip/pb"
+	log "github.com/treeforest/logger"
 	"io"
 	"os"
 	"os/signal"
@@ -38,6 +42,23 @@ type MessageCache struct {
 	msgs   []*Message
 	mp     map[int64]int
 	locker sync.RWMutex
+}
+
+func (c *MessageCache) IDs() map[int64]struct{} {
+	ids := make(map[int64]struct{})
+	c.locker.RLock()
+	for id, _ := range c.mp {
+		ids[id] = struct{}{}
+	}
+	c.locker.RUnlock()
+	return ids
+}
+
+func (c *MessageCache) Get(id int64) *Message {
+	c.locker.RLock()
+	m := c.msgs[c.mp[id]]
+	c.locker.RUnlock()
+	return m
 }
 
 func (c *MessageCache) Data() []byte {
@@ -89,22 +110,53 @@ func (c *Chat) GetBroadcasts() [][]byte {
 	return broadcasts
 }
 
-func (c *Chat) LocalState(join bool) []byte {
-	if !join {
+func (c *Chat) Summary() []byte {
+	ids := c.cache.IDs()
+	log.Debugf("local digest: %v", ids)
+	buffer := bytes.NewBuffer(nil)
+	_ = gob.NewEncoder(buffer).Encode(ids)
+	return buffer.Bytes()
+}
+
+func (c *Chat) LocalState(digest []byte) []byte {
+	ids := map[int64]struct{}{}
+	if digest != nil || len(digest) != 0 {
+		_ = gob.NewDecoder(bytes.NewReader(digest)).Decode(&ids)
+	}
+
+	log.Debugf("local state, digest: %v", ids)
+
+	localIds := c.cache.IDs()
+
+	if len(ids) >= len(localIds) {
 		return []byte{}
 	}
 
-	return c.cache.Data()
+	var diff []*Message
+	for id, _ := range localIds {
+		if _, ok := ids[id]; !ok {
+			diff = append(diff, c.cache.Get(id))
+		}
+	}
+
+	log.Debugf("diff: %v", diff)
+
+	buf := bytes.NewBuffer(nil)
+	_ = gob.NewEncoder(buf).Encode(diff)
+	return buf.Bytes()
 }
 
-func (c *Chat) MergeRemoteState(buf []byte, join bool) {
-	if len(buf) == 0 || !join {
+func (c *Chat) MergeRemoteState(buf []byte) {
+	if buf == nil || len(buf) == 0 {
 		return
 	}
 
 	//time.Sleep(time.Millisecond * 300)
 	msgs := make([]*Message, 0)
-	_ = json.Unmarshal(buf, &msgs)
+	_ = gob.NewDecoder(bytes.NewReader(buf)).Decode(&msgs)
+
+	log.Debugf("merge remote state:%v", msgs)
+
 	for _, msg := range msgs {
 		if c.cache.Exist(msg.Mid) {
 			continue
@@ -113,6 +165,21 @@ func (c *Chat) MergeRemoteState(buf []byte, join bool) {
 		fmt.Printf("%s\n> ", msg.Data)
 		c.cache.Add(msg)
 	}
+}
+
+// NotifyJoin 通知节点加入网络
+func (c *Chat) NotifyJoin(member pb.Membership) {
+	log.Infof("peer join %s %s", member.Endpoint, member.Id)
+}
+
+// NotifyLeave 通知节点离开网络
+func (c *Chat) NotifyLeave(member pb.Membership) {
+	log.Infof("peer leave %s %s", member.Endpoint, member.Id)
+}
+
+// NotifyUpdate 当节点的元数据发生改变时，通知节点更新
+func (c *Chat) NotifyUpdate(member pb.Membership) {
+	log.Infof("peer update %s %s", member.Endpoint, member.Id)
 }
 
 func (c *Chat) Send(nick, msg string) {
@@ -127,25 +194,34 @@ func (c *Chat) Send(nick, msg string) {
 	c.mu.Lock()
 	c.queue = append(c.queue, m.Marshal())
 	c.mu.Unlock()
+	c.cache.Add(&m)
 }
 
 func main() {
 	member := flag.String("member", "", "existing member")
-	port := flag.Int("port", 0, "listen port")
+	port := flag.Int("port", 0, "port")
+	ip := flag.String("ip", "localhost", "enpoint ip")
 	nick := flag.String("nick", "小李", "nick name")
 	flag.Parse()
+
+	log.SetLevel(log.INFO)
 
 	chat := &Chat{
 		cache: &MessageCache{
 			msgs: make([]*Message, 0),
-			mp:   map[int64]int{},
+			mp:   make(map[int64]int),
 		},
 		queue: make([][]byte, 0),
 	}
 
 	conf := gossip.DefaultConfig()
-	conf.BindPort = int32(*port)
+	conf.Port = *port
+	conf.Endpoint = fmt.Sprintf("%s:%d", *ip, *port)
 	conf.Delegate = chat
+	conf.EventDelegate = chat
+	if len(*member) != 0 {
+		conf.BootstrapPeers = strings.Split(*member, ",")
+	}
 	g := gossip.New(conf)
 
 	fmt.Printf("> ")
@@ -168,13 +244,9 @@ func main() {
 		}
 	}()
 
-	if len(*member) != 0 {
-		g.Join(strings.Split(*member, ","))
-	}
-
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, os.Kill)
 	<-done
-	g.Close()
+	g.Stop()
 	time.Sleep(time.Second)
 }

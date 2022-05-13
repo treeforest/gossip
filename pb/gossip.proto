@@ -13,80 +13,76 @@ option (gogoproto.unmarshaler_all) = true;
 option (gogoproto.goproto_getters_all) = false;
 
 service Gossip {
-  // 状态同步,同步节点信息+状态信息
-  rpc PushPull(stream Envelope) returns(stream Envelope){}
+  // GossipStream gossip 消息流
+  rpc GossipStream(stream GossipMessage) returns (stream GossipMessage) {}
 
   // ping
-  rpc Ping(PingReq) returns (PingResp) {}
-
-  // 用户发起的点对点通信
-  rpc Send(Envelope) returns (Empty) {}
-
-  // 广播数据 gossip
-  rpc Broadcast(BroadcastMessage) returns (Empty) {}
-
-  // Leave 离开网络
-  rpc Leave(LeaveReq) returns (Empty) {}
-
-  // MemberShip 成员信息
-  rpc MemberShip(MembershipReq) returns (MembershipResp) {}
+  rpc Ping(Empty) returns (Empty) {}
 }
-
-enum NodeStateType{
-  // Alice 能够正常和对方通信
-  Alive = 0;
-  // Suspect 远端节点在局域网，它能连接我，我不能连接它时
-  Suspect = 1;
-  // Dead 远端地址不能访问
-  Dead = 2;
-  // Left 节点主动离开网络
-  Left = 3;
-}
-
-message Node {
-  string id = 1;
-  string name = 2;
-  string ip = 3;
-  int32 port = 4;
-  bytes meta = 5;
-  NodeStateType state = 6;
-}
-
-message State {
-  Node node = 1 [(gogoproto.nullable) = false];
-  bool join = 2;
-}
-
-message PingReq {}
-message PingResp{}
 
 message Empty {}
 
-// Envelope 消息负载
-message Envelope {
-  bytes payload = 1;
+message GossipMessage {
+  string mid = 1;
+  string src_id = 2;
+  oneof content {
+    // 建立连接
+    ConnEstablish conn = 3;
+    // alive 消息
+    AliveMessage alive = 4;
+    // leave 消息
+    LeaveMessage leave = 5;
+    // used fro pinging
+    Empty empty = 6;
+    // 用户数据
+    Envelope user_data = 7;
+    // 状态同步
+    Envelope pull_req = 8;
+    Envelope pull_resp = 9;
+    // 成员消息
+    MembershipRequest mem_req = 10;
+    MembershipResponse mem_resp = 11;
+    // 确认消息
+    Acknowledgement ack = 12;
+    // 点对点消息
+    Envelope p2p_msg = 13;
+  }
 }
 
-// Payload 分片数据
-message Payload {
-  uint64 seq_num = 1;
-  bytes data = 2;
+message ConnEstablish {string id = 1;}
+
+message AliveMessage {
+  Membership membership = 1 [(gogoproto.nullable) = false];
 }
 
-// BroadcastMessage 广播消息
-message BroadcastMessage {
-  string src_id = 1; // 忽略的来源id
-  string mid = 2; // 传播使用的唯一id
-  Envelope env = 3 [(gogoproto.nullable) = false];
+message LeaveMessage {
+  Membership membership = 1 [(gogoproto.nullable) = false];
 }
 
-// LeaveReq 离开网络请求
-message LeaveReq {
+message Envelope {bytes payload = 1;}
+
+message MembershipRequest{
+  Membership membership = 1 [(gogoproto.nullable) = false];
+}
+
+message MembershipResponse {
+  // member 当前节点成员
+  Membership membership = 1[(gogoproto.nullable) = false];
+  // alive 活着的网络成员
+  repeated Membership alive = 2[(gogoproto.nullable) = false];
+  // dead 断联的网络成员
+  repeated Membership dead = 3[(gogoproto.nullable) = false];
+}
+
+message Acknowledgement {string error = 1;}
+
+message Membership {
+  string id =1;
+  string endpoint = 2;
+  bytes metadata = 3;
+}
+
+message RemotePeer {
   string id = 1;
-}
-
-message MembershipReq{}
-
-message MembershipResp {
-  repeated Node nodes = 1 [(gogoproto.nullable) = false];
+  string endpoint = 2;
 }
