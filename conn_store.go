@@ -130,7 +130,6 @@ func (cs *connectionStore) onConnected(cc *grpc.ClientConn, stream Stream, peer 
 
 	conn := newConnection(cc, stream)
 	conn.id = peer.Id
-	//conn.peer = peer
 	cs.id2Conn[conn.id] = conn
 	return conn
 }

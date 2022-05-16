@@ -25,13 +25,12 @@ func newConnection(c *grpc.ClientConn, stream Stream) *connection {
 
 type connection struct {
 	sync.RWMutex
-	cancel  context.CancelFunc
-	outBuff chan *msgSending
-	id      string
-	//peer         *pb.RemotePeer
-	handler      func(*pb.GossipMessage)
-	conn         *grpc.ClientConn
-	gossipStream Stream
+	cancel       context.CancelFunc
+	outBuff      chan *msgSending        // 发送通道
+	id           string                  // id
+	handler      func(*pb.GossipMessage) // 消息回调函数
+	conn         *grpc.ClientConn        // grpc客户端连接
+	gossipStream Stream                  // 流对象
 	stopChan     chan struct{}
 	stopOnce     sync.Once
 }
