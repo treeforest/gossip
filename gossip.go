@@ -68,7 +68,7 @@ func New(config *Config) Gossip {
 		stopping:    int32(0),
 	}
 
-	log.Infof("node Id: %s", config.Id)
+	log.Infof("gossip peer, (id:%s, endpoint:%s)", config.Id, config.Endpoint)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	g.cancel = cancel
