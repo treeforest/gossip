@@ -62,6 +62,7 @@ func newCommInstanceWithServer(config *Config) (Comm, error) {
 	s := grpc.NewServer(config.ServerOptions...)
 
 	commInst := &commImpl{
+		l:             log.NewStdLogger(log.WithPrefix("comm"), log.WithLevel(config.LogLevel)),
 		config:        config,
 		deadEndpoints: make(chan string, 128),
 		lock:          &sync.Mutex{},
@@ -73,7 +74,7 @@ func newCommInstanceWithServer(config *Config) (Comm, error) {
 		pubSub:        NewPubSub(),
 		msgs:          make(chan *ReceivedMessage, 2048),
 	}
-	commInst.connStore = newConnStore(commInst)
+	commInst.connStore = newConnStore(config.LogLevel, commInst)
 
 	commInst.stopWG.Add(1)
 	pb.RegisterGossipServer(s, commInst)
@@ -86,6 +87,7 @@ func newCommInstanceWithServer(config *Config) (Comm, error) {
 }
 
 type commImpl struct {
+	l             log.Logger
 	config        *Config
 	connStore     *connectionStore
 	deadEndpoints chan string
@@ -132,8 +134,8 @@ func (c *commImpl) createConnection(endpoint string, expectedID string) (*connec
 		return nil, errors.New("stopping")
 	}
 
-	log.Debugf("[begin]create connection, endpoint:%s expectedID:%s", endpoint, expectedID)
-	defer log.Debug("[end]create connection")
+	c.l.Debugf("[begin]create connection, endpoint:%s expectedID:%s", endpoint, expectedID)
+	defer c.l.Debug("[end]create connection")
 
 	cc, err := c.dial(endpoint)
 	if err != nil {
@@ -203,8 +205,8 @@ func (c *commImpl) GetID() string {
 }
 
 func (c *commImpl) Send(msg *pb.GossipMessage, peers ...*pb.RemotePeer) {
-	log.Debugf("[begin]send, peers:%v msg:%v", peers, *msg)
-	defer log.Debug("[end]send")
+	c.l.Debugf("[begin]send, peers:%v msg:%v", peers, *msg)
+	defer c.l.Debug("[end]send")
 
 	if c.isStopping() || len(peers) == 0 {
 		return
@@ -218,8 +220,8 @@ func (c *commImpl) Send(msg *pb.GossipMessage, peers ...*pb.RemotePeer) {
 }
 
 func (c *commImpl) SendWithResp(msg *pb.GossipMessage, timeout time.Duration, p *pb.RemotePeer) ([]byte, error) {
-	log.Debugf("[begin]send with response, peer:%v msg:%v", *p, *msg)
-	defer log.Debug("[end]send with response")
+	c.l.Debugf("[begin]send with response, peer:%v msg:%v", *p, *msg)
+	defer c.l.Debug("[end]send with response")
 
 	if p == nil {
 		return nil, errors.New("peer is nil")
@@ -244,8 +246,8 @@ func (c *commImpl) SendWithResp(msg *pb.GossipMessage, timeout time.Duration, p 
 
 func (c *commImpl) SendWithAck(msg *pb.GossipMessage, timeout time.Duration, minAck int, peers ...*pb.RemotePeer) (
 	ackCount int, err error) {
-	log.Debug("[begin]send with ack, peers:%v msg:%v", peers, *msg)
-	defer log.Debug("[end]send with ack")
+	c.l.Debug("[begin]send with ack, peers:%v msg:%v", peers, *msg)
+	defer c.l.Debug("[end]send with ack")
 
 	if len(peers) == 0 {
 		return 0, nil
@@ -306,8 +308,8 @@ func (c *commImpl) Probe(p *pb.RemotePeer) error {
 		return errors.New("stopping")
 	}
 
-	log.Debugf("[begin]probe, peer:%v", *p)
-	defer log.Debug("[end]probe")
+	c.l.Debugf("[begin]probe, peer:%v", *p)
+	defer c.l.Debug("[end]probe")
 
 	cc, err := c.dial(p.Endpoint)
 	if err != nil {
@@ -323,8 +325,8 @@ func (c *commImpl) Handshake(endpoint string) (*pb.RemotePeer, error) {
 		return nil, errors.New("stopping")
 	}
 
-	log.Debug("[begin]handshake, endpoint:%s", endpoint)
-	defer log.Debug("[end]handshake")
+	c.l.Debug("[begin]handshake, endpoint:%s", endpoint)
+	defer c.l.Debug("[end]handshake")
 
 	cc, err := c.dial(endpoint)
 	if err != nil {
@@ -363,8 +365,8 @@ func (c *commImpl) PresumeDead() <-chan string {
 }
 
 func (c *commImpl) CloseConn(p *pb.RemotePeer) {
-	log.Debugf("[begin]close conn, endpoint:%s", p.Endpoint)
-	defer log.Debug("[end]close conn")
+	c.l.Debugf("[begin]close conn, endpoint:%s", p.Endpoint)
+	defer c.l.Debug("[end]close conn")
 	c.connStore.closeByID(p.Id)
 }
 
@@ -373,8 +375,8 @@ func (c *commImpl) Stop() {
 		return
 	}
 
-	log.Debug("comm stopping...")
-	defer log.Debug("comm stopped")
+	c.l.Debug("comm stopping...")
+	defer c.l.Debug("comm stopped")
 
 	atomic.StoreInt32(&c.stopping, int32(1))
 	if c.gSrv != nil {
@@ -393,20 +395,20 @@ func (c *commImpl) sendToEndpoint(p *pb.RemotePeer, msg *pb.GossipMessage) {
 		return
 	}
 
-	log.Debugf("[begin]send to endpoint, peer:%v msg:%v", *p, *msg)
-	defer log.Debugf("[end]send to endpoint")
+	c.l.Debugf("[begin]send to endpoint, peer:%v msg:%v", *p, *msg)
+	defer c.l.Debugf("[end]send to endpoint")
 
 	var err error
 
 	conn, err := c.connStore.getConnection(p)
 	if err != nil {
-		log.Debugf("failed to get connection:%s %+v", p.Endpoint, err)
+		c.l.Debugf("failed to get connection:%s %+v", p.Endpoint, err)
 		c.disconnect(p.Id)
 		return
 	}
 
 	conn.send(msg, func(err error) {
-		log.Debug("send failed, begin disconnect (peer:%v msg:%v error:%+v)", *p, *msg, err)
+		c.l.Debug("send failed, begin disconnect (peer:%v msg:%v error:%+v)", *p, *msg, err)
 		c.disconnect(p.Id)
 	})
 }
@@ -415,7 +417,7 @@ func (c *commImpl) disconnect(id string) {
 	if c.isStopping() {
 		return
 	}
-	log.Debugf("disconnect %s", id)
+	c.l.Debugf("disconnect %s", id)
 	c.deadEndpoints <- id
 	c.connStore.closeByID(id)
 }
@@ -499,16 +501,16 @@ func (c *commImpl) GossipStream(stream pb.Gossip_GossipStreamServer) error {
 		return errors.New("shopping")
 	}
 
-	log.Debug("[begin] GossipStream")
-	defer log.Debug("[end] GossipStream")
+	c.l.Debug("[begin] GossipStream")
+	defer c.l.Debug("[end] GossipStream")
 
-	log.Debug("connect remote peer...")
+	c.l.Debug("connect remote peer...")
 	remotePeer, err := c.connectRemotePeer(stream)
 	if err != nil {
 		return err
 	}
 
-	log.Debugf("on connected, peer:", *remotePeer)
+	c.l.Debugf("on connected, peer:", *remotePeer)
 	conn := c.connStore.onConnected(nil, stream, remotePeer)
 
 	if conn == nil {
@@ -528,10 +530,10 @@ func (c *commImpl) GossipStream(stream pb.Gossip_GossipStreamServer) error {
 	defer func() {
 		c.connStore.closeByID(remotePeer.Id)
 		conn.close()
-		log.Debugf("close connection, peer:%v", remotePeer)
+		c.l.Debugf("close connection, peer:%v", remotePeer)
 	}()
 
-	log.Debugf("service connection, endpoint:%s", remotePeer.Endpoint)
+	c.l.Debugf("service connection, endpoint:%s", remotePeer.Endpoint)
 	return conn.serviceConnection()
 }
 

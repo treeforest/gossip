@@ -2,12 +2,16 @@ package gossip
 
 import (
 	"github.com/google/uuid"
+	log "github.com/treeforest/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"time"
 )
 
 type Config struct {
+	// LogLevel 日志等级（调试用）
+	LogLevel log.Level
+
 	// Id 节点id
 	Id string
 
@@ -86,6 +90,7 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
+		LogLevel:    log.INFO,
 		Id:          uuid.NewString(),
 		Port:        4399,
 		Endpoint:    "localhost:4399",

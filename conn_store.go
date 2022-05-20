@@ -15,14 +15,16 @@ type connFactory interface {
 
 type connectionStore struct {
 	sync.RWMutex
+	l            log.Logger
 	isClosing    bool
 	connFactory  connFactory
 	id2Conn      map[string]*connection
 	shutdownOnce sync.Once
 }
 
-func newConnStore(connFactory connFactory) *connectionStore {
+func newConnStore(logLevel log.Level, connFactory connFactory) *connectionStore {
 	return &connectionStore{
+		l:           log.NewStdLogger(log.WithPrefix("connStore"), log.WithLevel(logLevel)),
 		connFactory: connFactory,
 		isClosing:   false,
 		id2Conn:     make(map[string]*connection),
@@ -51,7 +53,7 @@ func (cs *connectionStore) getConnection(peer *pb.RemotePeer) (*connection, erro
 
 	createdConnection, err := cs.connFactory.createConnection(endpoint, id)
 	if err == nil {
-		log.Debugf("create new connection to %s, %s", endpoint, id)
+		cs.l.Debugf("create new connection to %s, %s", endpoint, id)
 	}
 
 	cs.RLock()
@@ -68,7 +70,7 @@ func (cs *connectionStore) getConnection(peer *pb.RemotePeer) (*connection, erro
 	conn, exists = cs.id2Conn[id]
 	if exists {
 		if createdConnection != nil {
-			log.Debugf("close old connection %s %s", endpoint, id)
+			cs.l.Debugf("close old connection %s %s", endpoint, id)
 			createdConnection.close()
 		}
 		return conn, nil
@@ -81,7 +83,7 @@ func (cs *connectionStore) getConnection(peer *pb.RemotePeer) (*connection, erro
 
 	conn = createdConnection
 	cs.id2Conn[conn.id] = conn
-	//log.Debugf("store connection %s %s", conn.peer.Endpoint, conn.peer.Id)
+	//cs.l.Debugf("store connection %s %s", conn.peer.Endpoint, conn.peer.Id)
 
 	go conn.serviceConnection()
 
@@ -96,7 +98,7 @@ func (cs *connectionStore) connNum() int {
 
 func (cs *connectionStore) shutdown() {
 	cs.shutdownOnce.Do(func() {
-		log.Debug("shutdown")
+		cs.l.Debug("shutdown")
 		cs.Lock()
 		cs.isClosing = true
 
@@ -113,7 +115,7 @@ func (cs *connectionStore) closeByID(id string) {
 	cs.Lock()
 	defer cs.Unlock()
 	if conn, exists := cs.id2Conn[id]; exists {
-		//log.Debugf("close connection by id(%s) %s", id, conn.peer.Endpoint)
+		//cs.l.Debugf("close connection by id(%s) %s", id, conn.peer.Endpoint)
 		conn.close()
 		delete(cs.id2Conn, conn.id)
 	}
@@ -124,7 +126,7 @@ func (cs *connectionStore) onConnected(cc *grpc.ClientConn, stream Stream, peer 
 	defer cs.Unlock()
 
 	if c, exists := cs.id2Conn[peer.Id]; exists {
-		log.Debugf("close old connection %s %s", peer.Id, peer.Endpoint)
+		cs.l.Debugf("close old connection %s %s", peer.Id, peer.Endpoint)
 		c.close()
 	}
 

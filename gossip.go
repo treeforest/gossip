@@ -42,6 +42,7 @@ var (
 type gossipImpl struct {
 	pb.UnimplementedGossipServer
 	sync.RWMutex
+	l           log.Logger
 	metadata    []byte             // 元数据
 	conf        *Config            // 配置信息
 	comm        Comm               // 通信层接口
@@ -59,6 +60,7 @@ func New(config *Config) Gossip {
 	}
 
 	g := &gossipImpl{
+		l:           log.NewStdLogger(log.WithPrefix("gossip"), log.WithLevel(config.LogLevel)),
 		metadata:    []byte{},
 		comm:        comm,
 		conf:        config,
@@ -68,7 +70,7 @@ func New(config *Config) Gossip {
 		stopping:    int32(0),
 	}
 
-	log.Infof("gossip peer, (id:%s, endpoint:%s)", config.Id, config.Endpoint)
+	g.l.Infof("gossip peer, (id:%s, endpoint:%s)", config.Id, config.Endpoint)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	g.cancel = cancel
@@ -193,7 +195,7 @@ func (g *gossipImpl) gossip() {
 		return
 	}
 	for _, payload := range broadcasts {
-		log.Debug("gossip: ", string(payload))
+		g.l.Debug("gossip: ", string(payload))
 		g.Gossip(&pb.GossipMessage{
 			SrcId: g.GetID(),
 			Mid:   g.midStore.NewID(),
@@ -258,7 +260,7 @@ func (g *gossipImpl) periodicalSendAlive() {
 func (g *gossipImpl) periodicalCheckAlive() {
 	dead := g.mMgr.CheckAliveMembers()
 	if len(dead) > 0 {
-		log.Debug("dead ", dead)
+		g.l.Debug("dead ", dead)
 		deadMembers2Expire := g.mMgr.ExpireDeadMembers(dead)
 		d := g.conf.EventDelegate
 		for _, member2Expire := range deadMembers2Expire {
@@ -421,8 +423,8 @@ func (g *gossipImpl) handleMsgFromComm(msg *ReceivedMessage) {
 }
 
 func (g *gossipImpl) handleLeaveMessage(msg *ReceivedMessage) {
-	log.Debugf("[begin]handle leave message, msg:%v", *msg)
-	defer log.Debug("[end]handle leave message")
+	g.l.Debugf("[begin]handle leave message, msg:%v", *msg)
+	defer g.l.Debug("[end]handle leave message")
 
 	member := msg.GetLeave().Membership
 
@@ -443,8 +445,8 @@ func (g *gossipImpl) handleLeaveMessage(msg *ReceivedMessage) {
 }
 
 func (g *gossipImpl) handleConnEstablishMessage(msg *ReceivedMessage) {
-	log.Debugf("[begin]handle conn establish message, msg:%v", *msg)
-	defer log.Debug("[end]handle conn establish message")
+	g.l.Debugf("[begin]handle conn establish message, msg:%v", *msg)
+	defer g.l.Debug("[end]handle conn establish message")
 
 	msg.Response(&pb.GossipMessage{
 		SrcId: g.GetID(),
@@ -458,15 +460,15 @@ func (g *gossipImpl) handleConnEstablishMessage(msg *ReceivedMessage) {
 }
 
 func (g *gossipImpl) handleUserData(msg *ReceivedMessage) {
-	log.Debugf("[begin]handle user data, msg:%v", *msg)
-	defer log.Debug("[end]handle user data")
+	g.l.Debugf("[begin]handle user data, msg:%v", *msg)
+	defer g.l.Debug("[end]handle user data")
 
 	g.userMsgChan <- msg.GetUserData()
 }
 
 func (g *gossipImpl) handlePullResponse(msg *ReceivedMessage) {
-	log.Debugf("[begin]handle pull response, msg:%v", *msg)
-	defer log.Debug("[end]handle pull response")
+	g.l.Debugf("[begin]handle pull response, msg:%v", *msg)
+	defer g.l.Debug("[end]handle pull response")
 
 	d := g.conf.Delegate
 	if d == nil {
@@ -476,8 +478,8 @@ func (g *gossipImpl) handlePullResponse(msg *ReceivedMessage) {
 }
 
 func (g *gossipImpl) handlePullRequest(msg *ReceivedMessage) {
-	log.Debugf("[begin]handle pull request, msg:%v", *msg)
-	defer log.Debug("[end]handle pull request")
+	g.l.Debugf("[begin]handle pull request, msg:%v", *msg)
+	defer g.l.Debug("[end]handle pull request")
 
 	var state []byte
 	d := g.conf.Delegate
@@ -498,8 +500,8 @@ func (g *gossipImpl) handlePullRequest(msg *ReceivedMessage) {
 }
 
 func (g *gossipImpl) handleMembershipResponse(msg *ReceivedMessage) {
-	log.Debugf("[begin]handle membership response, msg:%v", *msg)
-	defer log.Debug("[end]handle membership response")
+	g.l.Debugf("[begin]handle membership response, msg:%v", *msg)
+	defer g.l.Debug("[end]handle membership response")
 
 	// 更新来源节点
 	g.handleAliveMember(msg.GetMemResp().Membership)
@@ -523,15 +525,15 @@ func (g *gossipImpl) handleMembershipResponse(msg *ReceivedMessage) {
 }
 
 func (g *gossipImpl) handleAliveMessage(msg *ReceivedMessage) {
-	log.Debugf("[begin]handle alive message, msg:%v", *msg)
-	defer log.Debug("[end]handle alive message")
+	g.l.Debugf("[begin]handle alive message, msg:%v", *msg)
+	defer g.l.Debug("[end]handle alive message")
 
 	g.handleAliveMember(msg.GetAlive().Membership)
 }
 
 func (g *gossipImpl) handleMembershipRequest(msg *ReceivedMessage) {
-	log.Debugf("[begin]handle membership request, msg:%v", *msg)
-	defer log.Debug("[end]handle membership request")
+	g.l.Debugf("[begin]handle membership request, msg:%v", *msg)
+	defer g.l.Debug("[end]handle membership request")
 
 	g.handleAliveMember(msg.GetMemReq().Membership)
 
@@ -589,16 +591,16 @@ func (g *gossipImpl) handleAliveMember(member pb.Membership) {
 }
 
 func (g *gossipImpl) Ping(peer *pb.RemotePeer) bool {
-	log.Debugf("[begin]ping, peer:%v", *peer)
-	defer log.Debug("[end]ping")
+	g.l.Debugf("[begin]ping, peer:%v", *peer)
+	defer g.l.Debug("[end]ping")
 
 	err := g.comm.Probe(peer)
 	return err == nil
 }
 
 func (g *gossipImpl) send(member pb.Membership, msg *pb.GossipMessage) {
-	log.Debugf("[begin]send, peer:%v msg:%v", member.Peer(), *msg)
-	defer log.Debug("[end]send")
+	g.l.Debugf("[begin]send, peer:%v msg:%v", member.Peer(), *msg)
+	defer g.l.Debug("[end]send")
 	if g.isStopping() {
 		return
 	}
@@ -606,8 +608,8 @@ func (g *gossipImpl) send(member pb.Membership, msg *pb.GossipMessage) {
 }
 
 func (g *gossipImpl) sendByID(id string, msg *pb.GossipMessage) {
-	log.Debugf("[begin]send by id, id:%v msg:%v", id, *msg)
-	defer log.Debug("[end]send by id")
+	g.l.Debugf("[begin]send by id, id:%v msg:%v", id, *msg)
+	defer g.l.Debug("[end]send by id")
 
 	if g.isStopping() {
 		return
@@ -615,7 +617,7 @@ func (g *gossipImpl) sendByID(id string, msg *pb.GossipMessage) {
 
 	member, exist := g.mMgr.Load(id)
 	if !exist {
-		log.Warnf("not exist membership, id:%s", id)
+		g.l.Warnf("not exist membership, id:%s", id)
 		return
 	}
 
@@ -627,8 +629,8 @@ func (g *gossipImpl) Forward(msg ReceivedMessage) {
 		return
 	}
 
-	log.Debugf("[begin]forward, msg:%v", msg)
-	defer log.Debug("[end]forward")
+	g.l.Debugf("[begin]forward, msg:%v", msg)
+	defer g.l.Debug("[end]forward")
 
 	members := g.mMgr.GetAliveMembers(g.conf.GossipNodes, msg.SrcId)
 	msg.SrcId = g.GetID() // 切换来源标识
@@ -642,8 +644,8 @@ func (g *gossipImpl) Gossip(msg *pb.GossipMessage) {
 		return
 	}
 
-	//log.Debugf("[begin]gossip, msg:%v", msg)
-	//defer log.Debug("[end]gossip")
+	g.l.Debugf("[begin]gossip, msg:%v", msg)
+	defer g.l.Debug("[end]gossip")
 
 	if g.conf.PropagateIterations == 0 {
 		return
@@ -661,8 +663,8 @@ func (g *gossipImpl) Gossip(msg *pb.GossipMessage) {
 }
 
 func (g *gossipImpl) Stop() {
-	log.Debug("[begin]stopping")
-	defer log.Debug("[end]stopped")
+	g.l.Debug("[begin]stopping")
+	defer g.l.Debug("[end]stopped")
 
 	ok := atomic.CompareAndSwapInt32(&g.stopping, 0, 1)
 	if !ok {
@@ -704,7 +706,7 @@ func (g *gossipImpl) connect(endpoint string) {
 			}
 
 			// 握手成功
-			log.Debugf("handshake success %s %s", p.Endpoint, p.Id)
+			g.l.Debugf("handshake success %s %s", p.Endpoint, p.Id)
 
 			msg := &pb.GossipMessage{
 				SrcId: g.GetID(),
@@ -722,7 +724,7 @@ func (g *gossipImpl) connect(endpoint string) {
 					time.Sleep(g.conf.ReconnectInterval)
 					continue
 				}
-				log.Infof("connect %s success", endpoint)
+				g.l.Infof("connect %s success", endpoint)
 				break
 			}
 
@@ -732,8 +734,8 @@ func (g *gossipImpl) connect(endpoint string) {
 }
 
 func (g *gossipImpl) SendUntilAcked(p *pb.RemotePeer, msg *pb.GossipMessage) error {
-	log.Debugf("[begin]send until acked, peer:%v msg:%v", *p, msg)
-	defer log.Debug("[end]send until acked")
+	g.l.Debugf("[begin]send until acked, peer:%v msg:%v", *p, msg)
+	defer g.l.Debug("[end]send until acked")
 
 	_, err := g.comm.SendWithAck(msg, g.conf.ConnTimeout, 1, []*pb.RemotePeer{p}...)
 	return err

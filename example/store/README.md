@@ -6,26 +6,26 @@
 在这个示例中，将启动6个节点，步骤如下：
 * 启动节点1
 ```go
-go run main.go -port 6010
+go run main.go -port 6010 -endpoint localhost:6010
 ```
 * 启动节点2
 ```go
-go run main.go -port 6020 -member localhost:6010
+go run main.go -port 6020 -endpoint localhost:6020 -member localhost:6010
 ```
 * 启动节点3
 ```go
-go run main.go -port 6030 -member localhost:6010
+go run main.go -port 6030 -endpoint localhost:6030 -member localhost:6010
 ```
 * 启动节点4
 ```go
-go run main.go -port 6040 -member localhost:6010
+go run main.go -port 6040 -endpoint localhost:6040 -member localhost:6010
 ```
 * 启动节点5
 ```go
-go run main.go -port 6050 -member localhost:6010
+go run main.go -port 6050 -endpoint localhost:6050 -member localhost:6010
 ```
 * 启动节点6
 ```go
-go run main.go -port 6060 -member localhost:6010
+go run main.go -port 6060 -endpoint localhost:6060 -member localhost:6010
 ```
 
