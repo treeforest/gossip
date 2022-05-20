@@ -184,7 +184,11 @@ func (g *gossipImpl) schedule(ctx context.Context) {
 
 // gossip 广播用户数据
 func (g *gossipImpl) gossip() {
-	broadcasts := g.conf.Delegate.GetBroadcasts()
+	d := g.conf.Delegate
+	if d == nil {
+		return
+	}
+	broadcasts := d.GetBroadcasts()
 	if broadcasts == nil {
 		return
 	}
