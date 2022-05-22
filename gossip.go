@@ -312,13 +312,14 @@ func (g *gossipImpl) triggerFunc(ctx context.Context, stagger time.Duration, f f
 		return
 	}
 
-	t := time.NewTicker(stagger)
+	t := time.NewTimer(stagger)
 	for !g.isStopping() {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			f()
+			t.Reset(stagger)
 		}
 	}
 }
