@@ -110,7 +110,7 @@ type ReceivedMessage struct {
 // Response 响应消息
 func (m *ReceivedMessage) Response(msg *pb.GossipMessage) {
 	m.conn.send(msg, func(e error) {
-		log.Errorf("response failed: %+v", e)
+		log.Warnf("response failed: %+v", e)
 	})
 }
 
