@@ -81,7 +81,7 @@ func (s *Server) GetBroadcasts() [][]byte {
 	return msgs
 }
 
-func (s *Server) Summary() []byte {
+func (s *Server) GetPullRequest() []byte {
 	mp := make(map[string]struct{})
 	it := s.cache.Iterator()
 	for it.SetNext() {
@@ -93,7 +93,7 @@ func (s *Server) Summary() []byte {
 	return buf.Bytes()
 }
 
-func (s *Server) LocalState(summary []byte) []byte {
+func (s *Server) ProcessPullRequest(summary []byte) []byte {
 	mp := make(map[string]struct{})
 	if summary != nil {
 		_ = gob.NewDecoder(bytes.NewReader(summary)).Decode(&mp)
@@ -114,7 +114,7 @@ func (s *Server) LocalState(summary []byte) []byte {
 	return buf.Bytes()
 }
 
-func (s *Server) MergeRemoteState(buf []byte) {
+func (s *Server) ProcessPullResponse(buf []byte) {
 	state := make(map[string][]byte)
 	_ = gob.NewDecoder(bytes.NewReader(buf)).Decode(&state)
 	for k, v := range state {

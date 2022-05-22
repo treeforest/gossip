@@ -218,19 +218,19 @@ func (g *gossipImpl) periodicalPullMembership() {
 }
 
 // pull (SI Model)定期发送自身状态的摘要信息,远程peer收到该消息后，
-// 将回调 LocalState，并将其返回值（状态信息）发送到当前节点，当前节点将回
-// 调 MergeRemoteState,完成状态的更新。
+// 将回调 ProcessPullRequest，并将其返回值（状态信息）发送到当前节点，当前节点将回
+// 调 ProcessPullResponse,完成状态的更新。
 // other peer						local peer
-//  O   <------------- Summary -------------   O
-// /|\  callback state=LocalState(Summary)    /|\
+//  O   <------------- GetPullRequest -------------   O
+// /|\  callback state=ProcessPullRequest(GetPullRequest)    /|\
 //  |   ------------- State -------------->	  |
-// / \										 / \ callback MergeRemoteState(state)
+// / \										 / \ callback ProcessPullResponse(state)
 func (g *gossipImpl) pull() {
 	d := g.conf.Delegate
 	if d == nil {
 		return
 	}
-	digest := d.Summary()
+	digest := d.GetPullRequest()
 
 	g.Gossip(&pb.GossipMessage{
 		SrcId: g.GetID(),
@@ -474,7 +474,7 @@ func (g *gossipImpl) handlePullResponse(msg *ReceivedMessage) {
 	if d == nil {
 		return
 	}
-	d.MergeRemoteState(msg.GetPullResp().Payload)
+	d.ProcessPullResponse(msg.GetPullResp().Payload)
 }
 
 func (g *gossipImpl) handlePullRequest(msg *ReceivedMessage) {
@@ -484,7 +484,7 @@ func (g *gossipImpl) handlePullRequest(msg *ReceivedMessage) {
 	var state []byte
 	d := g.conf.Delegate
 	if d != nil {
-		state = d.LocalState(msg.GetPullReq().Payload)
+		state = d.ProcessPullRequest(msg.GetPullReq().Payload)
 	}
 
 	// send pull response

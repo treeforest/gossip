@@ -110,7 +110,7 @@ func (c *Chat) GetBroadcasts() [][]byte {
 	return broadcasts
 }
 
-func (c *Chat) Summary() []byte {
+func (c *Chat) GetPullRequest() []byte {
 	ids := c.cache.IDs()
 	log.Debugf("local digest: %v", ids)
 	buffer := bytes.NewBuffer(nil)
@@ -118,7 +118,7 @@ func (c *Chat) Summary() []byte {
 	return buffer.Bytes()
 }
 
-func (c *Chat) LocalState(digest []byte) []byte {
+func (c *Chat) ProcessPullRequest(digest []byte) []byte {
 	ids := map[int64]struct{}{}
 	if digest != nil || len(digest) != 0 {
 		_ = gob.NewDecoder(bytes.NewReader(digest)).Decode(&ids)
@@ -146,7 +146,7 @@ func (c *Chat) LocalState(digest []byte) []byte {
 	return buf.Bytes()
 }
 
-func (c *Chat) MergeRemoteState(buf []byte) {
+func (c *Chat) ProcessPullResponse(buf []byte) {
 	if buf == nil || len(buf) == 0 {
 		return
 	}

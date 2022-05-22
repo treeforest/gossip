@@ -11,20 +11,20 @@ type Delegate interface {
 	// 	   data: 待广播的消息
 	GetBroadcasts() (data [][]byte)
 
-	// Summary 返回 pull 请求时所携带的信息。
+	// GetPullRequest 返回 pull 请求时所携带的信息。
 	// 返回值：
 	//     req: pull请求信息
-	Summary() (req []byte)
+	GetPullRequest() (req []byte)
 
-	// LocalState 返回相关的本地状态信息。
+	// ProcessPullRequest 处理pull请求，并返回结果。
 	// 参数：
-	//     summary: 远程节点的 pull 请求信息
+	//     req: 远程节点的 pull 请求信息
 	// 返回值：
-	//     state: 状态数据
-	LocalState(summary []byte) (state []byte)
+	//     resp: pull 响应消息
+	ProcessPullRequest(req []byte) (resp []byte)
 
-	// MergeRemoteState 合并远程节点返回的状态信息。
+	// ProcessPullResponse 合并远程节点返回的状态信息。
 	// 参数：
-	//     state: 远程节点返回的状态信息
-	MergeRemoteState(state []byte)
+	//     resp: 远程节点返回的 pull 响应消息
+	ProcessPullResponse(resp []byte)
 }
